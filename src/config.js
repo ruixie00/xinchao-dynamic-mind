@@ -23,6 +23,25 @@ export function loadConfig() {
     settleIntervalMinutes: number('SETTLE_INTERVAL_MINUTES', 15, 1, 1440),
     sleepAfterMinutes: number('SLEEP_AFTER_MINUTES', 90, 5, 10080),
     shadowMode: bool('SHADOW_MODE', true),
+    experience: {
+      enabled: bool('EXPERIENCE_ENABLED', false),
+      materialEnabled: bool('EXPERIENCE_MATERIAL_ENABLED', false),
+      handoffEnabled: bool('EXPERIENCE_HANDOFF_ENABLED', false),
+      agentId: process.env.EXPERIENCE_AGENT_ID ?? 'ethan',
+      thoughtEnabled: bool('EXPERIENCE_THOUGHT_ENABLED', false),
+      daytimeEnabled: bool('EXPERIENCE_DAYTIME_ENABLED', false),
+      minMaterialChars: number('EXPERIENCE_MIN_MATERIAL_CHARS', 16, 1, 1000),
+      ttlMinutes: number('EXPERIENCE_EVENT_TTL_MINUTES', 120, 15, 1440),
+      model: {
+        enabled: bool('EXPERIENCE_MODEL_ENABLED', false),
+        name: process.env.EXPERIENCE_MODEL_NAME ?? 'deepseek-v4-flash',
+        baseUrl: process.env.EXPERIENCE_MODEL_BASE_URL ?? 'https://api.deepseek.com',
+        apiKey: process.env.EXPERIENCE_MODEL_API_KEY ?? '',
+        timeoutMs: number('EXPERIENCE_MODEL_TIMEOUT_MS', 15000, 1000, 60000),
+        maxInputChars: number('EXPERIENCE_MODEL_MAX_INPUT_CHARS', 3000, 100, 10000),
+        maxOutputTokens: number('EXPERIENCE_MODEL_MAX_OUTPUT_TOKENS', 650, 100, 1000),
+      },
+    },
     model: {
       enabled: bool('MODEL_ENABLED', false),
       baseUrl: (process.env.MODEL_BASE_URL ?? 'http://127.0.0.1:11434/v1').replace(/\/$/, ''),
@@ -138,6 +157,13 @@ export function loadConfig() {
 }
 
 export function validateConfig(config) {
+  if (config.experience?.enabled) {
+    if (config.bark.enabled || config.bridge.enabled || config.model.enabled) {
+      throw new Error('experience mode requires legacy MODEL_ENABLED, BARK_ENABLED and BRIDGE_ENABLED to remain false');
+    }
+    if (!/^[a-z0-9_-]{1,32}$/i.test(config.experience.agentId)) throw new Error('invalid experience agent id');
+  }
+  if (config.experience?.handoffEnabled && !config.experience.enabled) throw new Error('experience handoff requires experience mode');
   const externalMemoryEnabled = Boolean(
     config.ombre.readEnabled
     || config.ombre.writeEnabled

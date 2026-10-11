@@ -5,7 +5,9 @@ import { INTERACTION_TYPES, applyDriveFeedback, applyOmbreHeartbeat, barkAllowed
 import { buildInteractionBridgeMessage } from './interaction-messages.js';
 import { selectUniqueBark } from './bark-dedupe.js';
 import { StateStore } from './state-store.js';
-import { ModelClient } from './model-client.js';
+import { ExperienceModel, ModelClient } from './model-client.js';
+import { ProactiveCycle } from './proactive-cycle.js';
+import { proactiveResponse } from './proactive-api.js';
 import { OmbreClient } from './ombre-client.js';
 import { BarkClient } from './bark-client.js';
 import { readOmbreHeartbeat } from './heartbeat-store.js';
@@ -45,6 +47,9 @@ const bridgeStreams = new Set();
 await oauth.init();
 let cyclePromise = null;
 const SYSTEM_VERSION = '2.6.0';
+const experienceCycle = new ProactiveCycle({ store, config, model: new ExperienceModel(config.experience.model),
+  update: mutate => updateState({ type: 'proactive_cycle', source: 'timer', at: new Date() }, mutate),
+});
 
 function log(event, fields = {}) {
   console.log(JSON.stringify({ at: new Date().toISOString(), event, ...fields }));
@@ -104,6 +109,7 @@ async function runCycle() {
   cyclePromise = (async () => {
     const now = new Date();
     await synchronizeOmbreHeartbeat();
+    if (config.experience.enabled) return experienceCycle.run();
     let settled;
     await updateState({
       type: 'settle',
@@ -858,6 +864,13 @@ const server = createServer(async (request, response) => {
       });
     }
     if (!authorized(request)) return send(response, 401, { error: 'unauthorized' });
+
+    if (url.pathname.startsWith('/v1/proactive/')) {
+      const result = await proactiveResponse({ method: request.method, pathname: url.pathname,
+        payload: request.method === 'POST' ? await body(request) : undefined,
+        store, enabled: config.experience.handoffEnabled });
+      return result ? send(response, result.status, result.body) : send(response, 404, { error: 'not found' });
+    }
 
     if (request.method === 'GET' && url.pathname.startsWith('/v1/dashboard/')) {
       const payload = await dashboardPayload(url.pathname, url);
