@@ -34,6 +34,33 @@ function output(type, wantsExpression = true) {
     source: 'model', wantsExpression, expressionIntent: wantsExpression ? `share ${type}` : '' };
 }
 
+test('failed experiences persist safe diagnostics and preserve rules dream without retries or events', async t => {
+  const config = configuration();
+  const seed = newState(ago);
+  seed.lastHeartbeatAt = ago.toISOString(); seed.drives.share = 1;
+  seed.nextDaytimeEmergenceAt = ago.toISOString();
+  const store = await fixture(t, seed);
+  const calls = [];
+  const model = { generateExperience: async ({ type }) => {
+    calls.push(type);
+    throw type === 'dream' ? new Error('invalid_dream_output') : new Error('private secret and material');
+  }, ruleDream: drives => new ExperienceModel(config.experience.model).ruleDream(drives) };
+  const result = await new ProactiveCycle({ store, config, model, material: async () => 'enough private material', now: () => now }).run();
+  assert.deepEqual(calls, ['dream', 'thought', 'daytime']);
+  const dream = result.state.proactive.experiences.dream[0];
+  assert.equal(dream.source, 'rules'); assert.equal(dream.failure, 'model_failed');
+  assert.equal(dream.failureReason, 'invalid_dream_output');
+  for (const type of ['thought', 'daytime']) {
+    assert.equal(result.state.proactive.experiences[type].length, 0);
+    assert.deepEqual(result.state.proactive.cycles[result.cycleId].stages[type], { status: 'failed', failureReason: 'experience_unknown_error' });
+  }
+  assert.equal(result.state.proactive.events.length, 0);
+  assert.equal(result.state.proactive.activeCycleId, null);
+  const reloaded = await new StateStore(store.path, () => seed).read();
+  assert.equal(reloaded.proactive.experiences.dream[0].failureReason, 'invalid_dream_output');
+  assert.ok(!JSON.stringify(reloaded.proactive).includes('private secret'));
+});
+
 test('original rule-only awake cycle has zero model calls and identical state evolution', async t => {
   const config = configuration();
   config.experience.daytimeEnabled = false;

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { buildExperienceMaterial } from './experience-material.js';
+import { experienceFailureReason } from './model-client.js';
 import { contactIdleAllowed, daytimeEmergenceAllowed, dreamAllowed, recordDream, scheduleDaytimeEmergence, settleState, topDrives } from './engine.js';
 
 const TYPES = ['dream', 'thought', 'daytime'];
@@ -137,10 +138,12 @@ export class ProactiveCycle {
     let value;
     try {
       value = canCall ? await this.model.generateExperience({ type, state, material, topDrives: topDrives(state) }) : this.model.ruleDream(topDrives(state));
-    } catch {
-      if (type !== 'dream') return this.stage(cycleId, type, 'failed');
+    } catch (error) {
+      const failureReason = experienceFailureReason(error);
+      if (type !== 'dream') return this.stage(cycleId, type, 'failed', failureReason);
       value = this.model.ruleDream(topDrives(state));
       value.failure = 'model_failed';
+      value.failureReason = failureReason;
     }
     // Content and gate bookkeeping are committed together before arbitration.
     await this.update(latest => {
@@ -151,11 +154,11 @@ export class ProactiveCycle {
         latest.daytimeEmergenceUsage ??= {};
         latest.daytimeEmergenceUsage[day] = Number(latest.daytimeEmergenceUsage[day] ?? 0) + 1;
       }
-      ledger(latest).cycles[cycleId].stages[type] = { status: 'saved' };
+      ledger(latest).cycles[cycleId].stages[type] = { status: 'saved', ...(value.failureReason ? { failureReason: value.failureReason } : {}) };
       return latest;
     });
   }
-  stage(cycleId, type, status) {
-    return this.update(state => { ledger(state).cycles[cycleId].stages[type] = { status }; return state; });
+  stage(cycleId, type, status, failureReason) {
+    return this.update(state => { ledger(state).cycles[cycleId].stages[type] = { status, ...(failureReason ? { failureReason } : {}) }; return state; });
   }
 }
